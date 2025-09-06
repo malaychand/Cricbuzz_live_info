@@ -101,170 +101,212 @@ def main():
 
             # Q7
             "Q7. Highest individual batting score per format": """
-                /* Expected tables: batting_innings(innings_id, player_id, format, runs), formats in ('Test','ODI','T20I') */
-                SELECT format,
-                       MAX(runs) AS highest_score
-                FROM batting_innings
-                WHERE format IN ('Test','ODI','T20I')
-                GROUP BY format;
+                WITH max_batting_scores AS (
+                    SELECT 'Test' AS format, MAX(HS) AS highest_score
+                    FROM bat
+                    WHERE Type = 'Test'
+                    UNION ALL
+                    SELECT 'ODI' AS format, MAX(HS) AS highest_score
+                    FROM bat
+                    WHERE Type = 'ODI'
+                    UNION ALL
+                    SELECT 'T20I' AS format, MAX(HS) AS highest_score
+                    FROM bat
+                    WHERE Type = 'T20'
+                )
+                SELECT format, highest_score
+                FROM max_batting_scores;
             """,
 
             # Q8
             "Q8. Series that started in 2024": """
-                /* Expected table: series(series_id, series_name, host_country, match_type, start_date, total_matches) */
-                SELECT series_name, host_country, match_type, start_date, total_matches
-                FROM series
-                WHERE strftime('%Y', start_date) = '2024'
-                ORDER BY DATE(start_date);
+                SELECT 
+                    "Series Name",
+                    "Format" AS "Match Type",
+                    DATE("Start Date") AS match_date,
+                    COUNT(*) AS Total_Matches_Planned
+                FROM cricket_matches
+                WHERE DATE("Start Date") BETWEEN DATE('2024-01-01') AND DATE('2024-12-31')
+                GROUP BY "Series Name", "Format", match_date;
+
             """,
 
             # Q9
             "Q9. All-rounders with >1000 runs AND >50 wickets (by format)": """
-                /* Expected tables:
-                   batting_totals(player_id, format, runs_total)
-                   bowling_totals(player_id, format, wickets_total)
-                   players(player_id, name)
-                */
-                SELECT p.name AS player_name, bt.format,
-                       bt.runs_total AS total_runs,
-                       bw.wickets_total AS total_wickets
-                FROM batting_totals bt
-                JOIN bowling_totals bw ON bw.player_id = bt.player_id AND bw.format = bt.format
-                JOIN players p ON p.player_id = bt.player_id
-                WHERE bt.runs_total > 1000 AND bw.wickets_total > 50
-                ORDER BY bt.format, bt.runs_total DESC, bw.wickets_total DESC;
+                SELECT name, total_runs, total_wickets, playing_role
+                FROM players
+                WHERE total_runs > 1000 AND total_wickets > 50;
             """,
 
             # Q10
             "Q10. Last 20 completed matches (desc)": """
-                /* Expected table: matches(match_id, match_title, team1, team2, winner_team, victory_margin, victory_type, venue_name, state)
-                   state='Complete' or similar
-                */
-                SELECT match_title,
-                       team1, team2,
-                       winner_team,
-                       victory_margin,
-                       victory_type,
-                       venue_name,
-                       match_date
-                FROM matches
-                WHERE state = 'Complete'
-                ORDER BY DATE(match_date) DESC, match_id DESC
-                LIMIT 20;
+              SELECT 
+                  Description AS match_description, 
+                  "Team 1" AS team_1_name, 
+                  "Team 2" AS team_2_name, 
+
+                  -- Winning Team
+                  CASE 
+                      WHEN "Team 1" = 'Australia (AUS)' THEN 'Australia (AUS)'
+                      WHEN "Team 2" = 'Australia (AUS)' THEN 'Australia (AUS)'
+                      WHEN Status LIKE '%won%' THEN TRIM(SUBSTR(Status, 1, INSTR(Status, 'won') - 1))
+                      ELSE NULL
+                  END AS winning_team, 
+
+                  -- Victory Margin
+                  CASE 
+                      WHEN "Team 1" = 'Australia (AUS)' THEN "Team 1 Score"
+                      WHEN "Team 2" = 'Australia (AUS)' THEN "Team 2 Score"
+                      WHEN Status LIKE '%by %' THEN TRIM(SUBSTR(Status, INSTR(Status, 'by') + 3))
+                      ELSE NULL
+                  END AS victory_margin, 
+
+                  -- Victory Type
+                  CASE 
+                      WHEN "Team 1" = 'Australia (AUS)' THEN 'runs'
+                      WHEN "Team 2" = 'Australia (AUS)' THEN 'wickets'
+                      WHEN Status LIKE '%runs%' THEN 'runs'
+                      WHEN Status LIKE '%wkts%' THEN 'wickets'
+                      WHEN Status LIKE '%wickets%' THEN 'wickets'
+                      ELSE 'other'
+                  END AS victory_type, 
+
+                  Venue AS venue_name,
+                  DATE("Start Date") AS match_date,
+                  Status AS original_status
+
+              FROM cricket_matches_processed
+              WHERE State = 'Complete' AND Status LIKE '%won%'
+              ORDER BY DATE("Start Date") DESC
+              LIMIT 20;
             """,
 
             # Q11
             "Q11. Players with >=2 formats: runs by format + overall batting avg": """
-                /* Expected tables:
-                   batting_totals(player_id, format, runs_total, innings, outs, average)
-                   players(player_id, name)
-                */
-                WITH per_format AS (
-                  SELECT player_id,
-                         SUM(CASE WHEN format='Test' THEN runs_total ELSE 0 END) AS test_runs,
-                         SUM(CASE WHEN format='ODI'  THEN runs_total ELSE 0 END) AS odi_runs,
-                         SUM(CASE WHEN format='T20I' THEN runs_total ELSE 0 END) AS t20i_runs,
-                         COUNT(DISTINCT format) AS fmt_count
-                  FROM batting_totals
-                  GROUP BY player_id
-                ),
-                overall AS (
-                  SELECT player_id,
-                         CAST(SUM(runs_total) AS FLOAT) / NULLIF(SUM(outs),0) AS overall_batting_avg
-                  FROM batting_totals
-                  GROUP BY player_id
-                )
-                SELECT p.name,
-                       pf.test_runs, pf.odi_runs, pf.t20i_runs,
-                       ROUND(o.overall_batting_avg, 2) AS overall_batting_avg
-                FROM per_format pf
-                JOIN players p ON p.player_id = pf.player_id
-                LEFT JOIN overall o ON o.player_id = pf.player_id
-                WHERE pf.fmt_count >= 2
-                ORDER BY overall_batting_avg DESC NULLS LAST;
+                  SELECT 
+                  player_id, 
+                  player_name,
+                  SUM(test_runs) AS total_test_runs, 
+                  SUM(odi_runs) AS total_odi_runs, 
+                  SUM(t20_runs) AS total_t20_runs,
+                  (SUM(test_runs) + SUM(odi_runs) + SUM(t20_runs)) * 1.0 / 
+                  NULLIF(
+                      (CASE WHEN SUM(test_runs) > 0 THEN 1 ELSE 0 END + 
+                      CASE WHEN SUM(odi_runs) > 0 THEN 1 ELSE 0 END + 
+                      CASE WHEN SUM(t20_runs) > 0 THEN 1 ELSE 0 END),
+                      0
+                  ) AS overall_batting_avg
+              FROM cricket_players_stats
+              GROUP BY player_id, player_name
+              HAVING COUNT(DISTINCT role) >= 2;
             """,
 
             # Q12
             "Q12. Team wins at home vs away": """
-                /* Expected tables:
-                   matches(match_id, match_date, team1, team2, winner_team, venue_country)
-                   teams(team_name, country)
-                */
-                WITH teams_norm AS (
-                  SELECT team_name, country FROM teams
+                WITH venue_countries AS (
+                    SELECT 
+                        Venue,
+                        CASE 
+                            WHEN Venue LIKE '%Mackay%' THEN 'AUS'
+                            WHEN Venue LIKE '%Szodliget%' THEN 'HUN'
+                            ELSE NULL
+                        END AS venue_country
+                    FROM cricket_matches
+                    GROUP BY Venue
                 ),
-                labeled AS (
-                  SELECT m.*,
-                         CASE
-                           WHEN m.venue_country = t1.country AND (m.team1 = t1.team_name) THEN m.team1
-                           WHEN m.venue_country = t2.country AND (m.team2 = t2.team_name) THEN m.team2
-                           ELSE NULL
-                         END AS home_team
-                  FROM matches m
-                  LEFT JOIN teams_norm t1 ON t1.team_name = m.team1
-                  LEFT JOIN teams_norm t2 ON t2.team_name = m.team2
+                match_analysis AS (
+                    SELECT 
+                        "Team 1" AS team1,
+                        "Team 2" AS team2,
+                        v.venue_country,
+                        Status
+                    FROM cricket_matches m
+                    JOIN venue_countries v ON m.Venue = v.Venue
+                    WHERE m.State = 'Complete' AND m.Status LIKE '%won%'
                 )
-                SELECT team,
-                       SUM(CASE WHEN team = home_team  AND winner_team = team THEN 1 ELSE 0 END) AS home_wins,
-                       SUM(CASE WHEN team != home_team AND winner_team = team THEN 1 ELSE 0 END) AS away_wins
-                FROM (
-                  SELECT team1 AS team, * FROM labeled
-                  UNION ALL
-                  SELECT team2 AS team, * FROM labeled
-                )
-                GROUP BY team
-                ORDER BY (home_wins + away_wins) DESC;
+                SELECT team1, team2, venue_country, Status
+                FROM match_analysis;
             """,
 
             # Q13
             "Q13. Partnerships (adjacent batters) >= 100 runs in an innings": """
-                /* Expected tables:
-                   batting_innings(innings_id, match_id, player_id, batting_position, runs, partnership_id)
-                   partnerships(partnership_id, innings_id, runs, wicket_number)
-                   players(player_id, name)
-                */
-                SELECT p1.name AS batter_1, p2.name AS batter_2,
-                       bp.runs AS partnership_runs,
-                       bi1.innings_id
-                FROM partnerships bp
-                JOIN batting_innings bi1 ON bi1.partnership_id = bp.partnership_id
-                JOIN batting_innings bi2 ON bi2.partnership_id = bp.partnership_id AND ABS(bi1.batting_position - bi2.batting_position) = 1
-                JOIN players p1 ON p1.player_id = bi1.player_id
-                JOIN players p2 ON p2.player_id = bi2.player_id AND p2.player_id > p1.player_id
-                WHERE bp.runs >= 100
-                GROUP BY bp.partnership_id
-                ORDER BY bp.runs DESC;
+                  WITH batting_ordered AS (
+                      SELECT 
+                          *,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY M, Inn, Team, Type 
+                              ORDER BY NO
+                          ) as batting_position
+                      FROM bat
+                      WHERE Runs > 0  -- Exclude players who didn't bat
+                  )
+
+                  SELECT 
+                      a.Player AS Player1,
+                      b.Player AS Player2,
+                      a.Runs + b.Runs AS PartnershipRuns,
+                      a.Inn AS Innings,
+                      a.M AS MatchID,
+                      a.Team,
+                      a.Type AS MatchType,
+                      a.batting_position AS Position1,
+                      b.batting_position AS Position2
+                  FROM batting_ordered a
+                  JOIN batting_ordered b 
+                      ON a.M = b.M 
+                      AND a.Inn = b.Inn 
+                      AND a.Team = b.Team 
+                      AND a.Type = b.Type
+                      AND b.batting_position = a.batting_position + 1
+                  WHERE a.Runs + b.Runs >= 100
+                  ORDER BY PartnershipRuns DESC;
             """,
 
             # Q14
             "Q14. Bowling at venues (>=3 matches, >=4 overs each match)": """
-                /* Expected tables:
-                   bowling_innings(innings_id, match_id, player_id, overs, runs_conceded, wickets, venue_id)
-                   matches(match_id, venue_id)
-                   venues(venue_id, venue_name)
-                */
-                WITH valid_spells AS (
-                  SELECT bi.*, m.venue_id
-                  FROM bowling_innings bi
-                  JOIN matches m ON m.match_id = bi.match_id
-                  WHERE bi.overs >= 4
+                WITH bowler_venue_stats AS (
+                    SELECT 
+                        v.venue_name,
+                        b.Player AS player_name,
+                        b.Team,
+                        b.Type,
+                        b.Econ,
+                        b.Wkts,
+                        b.B,
+                        b.M,
+                        COUNT(*) OVER (PARTITION BY b.Player, v.venue_name) AS matches_at_venue
+                    FROM bowl b
+                    CROSS JOIN (SELECT DISTINCT venue_name FROM venues) v
+                    WHERE b.B >= 24  -- At least 4 overs (24 balls) bowled
                 ),
-                agg AS (
-                  SELECT player_id, venue_id,
-                         COUNT(DISTINCT match_id) AS matches_played,
-                         SUM(runs_conceded) * 1.0 / NULLIF(SUM(overs),0) AS economy_rate,
-                         SUM(wickets) AS total_wickets
-                  FROM valid_spells
-                  GROUP BY player_id, venue_id
-                  HAVING COUNT(DISTINCT match_id) >= 3
+
+                venue_filtered AS (
+                    SELECT 
+                        venue_name,
+                        player_name,
+                        Team,
+                        Type,
+                        Econ,
+                        Wkts,
+                        M,
+                        matches_at_venue
+                    FROM bowler_venue_stats
+                    WHERE matches_at_venue >= 3
                 )
-                SELECT p.name AS bowler, v.venue_name, a.matches_played,
-                       ROUND(a.economy_rate,2) AS avg_economy,
-                       a.total_wickets
-                FROM agg a
-                JOIN players p ON p.player_id = a.player_id
-                JOIN venues v ON v.venue_id = a.venue_id
-                ORDER BY v.venue_name, avg_economy ASC, total_wickets DESC;
+
+                SELECT 
+                    venue_name,
+                    player_name,
+                    ROUND(AVG(Econ), 2) AS avg_economy_rate,
+                    SUM(Wkts) AS total_wickets,
+                    COUNT(DISTINCT M) AS matches_played,
+                    ROUND(SUM(Wkts) * 1.0 / COUNT(DISTINCT M), 2) AS wickets_per_match,
+                    MIN(Econ) AS best_economy,
+                    MAX(Econ) AS worst_economy
+                FROM venue_filtered
+                GROUP BY venue_name, player_name
+                HAVING COUNT(DISTINCT M) >= 3
+                ORDER BY avg_economy_rate ASC, total_wickets DESC;
             """,
 
             # Q15
